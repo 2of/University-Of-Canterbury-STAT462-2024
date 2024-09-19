@@ -1,0 +1,737 @@
+---
+title: "ass_2"
+author: "Noah King - nki38 - 96851177"
+date: "2024-09-07"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library("ggplot2")
+library(magrittr)
+library(dplyr)
+library(corrplot)
+library(class)
+library(MASS)
+
+library(knitr)
+set.seed(1234)
+```
+
+
+# Question 1 - Death
+### Preamble
+1. Load in the dataset...
+```{r}
+data <- read.csv("heart.csv", header=TRUE, sep=",")
+data <- data[complete.cases(data[, c("DEATH", "GLUCOSE", "SYSBP")]), ]
+```
+
+We wish to predict the value of DEATH, which is defined in our training data as either =1 or =0 given some number of explanatory variables.... We will consider GLUCOSE (amount of glucose in blood at last measurement) and SYSBP (systolic blood pressure at last measurement). 
+
+
+##### a
+
+Firstly split the dataset into train, test
+```{r}
+train_ind <- sample(1:nrow(data), size = nrow(data) * 0.8)
+df_train <- data[train_ind, ]
+df_test <- data[-train_ind, ]
+```
+
+
+
+##### b
+
+Intuitively, we might want to form a hypothesis that More Glucose or Higher blood pressure is correlated with Death = 1....  We will form the hypothesis that if both are high, theur comibination increases the risk of death.
+
+
+Note: The data below is the entire set
+
+```{r}
+ggplot(data, aes(x = GLUCOSE, y = SYSBP, color = factor(DEATH))) +
+  geom_point() +
+  labs(title = "Scatterplot of GLUCOSE vs SYSBP by DEATH",
+       x = "Glucose Level",
+       y = "Systolic Blood Pressure",
+       color = "Death (0 or 1)") +
+  theme_minimal()
+```
+Indeed, per above, we see that increases in either Blood Pressure or Glucose does correlate (at least per looking) with death; it is therefore likely that htese contribute to risk of death.
+
+##### c:
+We can fit a multiple logistic regression model thusly:
+```{r}
+model <- glm(DEATH ~ GLUCOSE + SYSBP, data = df_train, family = binomial)
+summary(model)
+```
+We define a classification threshold (i.e. the model will output a prob of class =1, class = 0, if the threshold is met it is the class)
+```{r}
+CLASSIFICATION_THRESH <- 0.5
+```
+
+
+##### c.i
+
+Now that we've created the model, we fit the model.... Using the logic above we define the output class in line 2
+```{r}
+predicted_prob <- predict(model, newdata = df_test, type = "response")
+predicted_class <- ifelse(predicted_prob > CLASSIFICATION_THRESH, 1, 0)
+```
+
+Our first metric is the misclass. rate:
+```{r}
+misclassification_rate <- mean(predicted_class != df_test$DEATH)
+cat("For the test set, the misclassification rate is:", misclassification_rate, "\n")
+```
+
+##### c.ii
+The confusion matrix for our tes set is the following:
+```{r}
+confusion_matrix <- table(Predicted = predicted_class, Actual = df_test$DEATH)
+#formatting for readability
+TN <- confusion_matrix[1,1]  
+FP <- confusion_matrix[2,1] 
+FN <- confusion_matrix[1,2]
+TP <- confusion_matrix[2,2] 
+confusion_df <- data.frame(
+  Outcome = c("True Positive", "False Positive", "True Negative", "False Negative"),
+  Count = c(TP, FP, TN, FN)
+)
+kable(confusion_df, caption = "All Confusion Matrix Results")
+#The below line just lets us reuse this code later, ignore
+LR_CONF_MAT <- confusion_matrix
+```
+##### c.ii
+```{r}
+df_test$z_pred_logreg <- predict(model, type = "response", newdata = df_test)
+grid_glucose <- seq(min(df_test$GLUCOSE), max(df_test$GLUCOSE), length.out = 100)
+grid_sysbp <- seq(min(df_test$SYSBP), max(df_test$SYSBP), length.out = 100)
+
+
+dfplot <- expand.grid(GLUCOSE = grid_glucose, SYSBP = grid_sysbp)
+
+
+dfplot$z_pred_logreg <- predict(model, newdata = dfplot, type = "response")
+ggplot() +
+  geom_point(data = dfplot, aes(x = GLUCOSE, y = SYSBP, color = (z_pred_logreg >= 0.5)), alpha = 0.1, size = 1) +
+  geom_contour(data = dfplot, aes(x = GLUCOSE, y = SYSBP, z = z_pred_logreg), breaks = c(0.5), linewidth = 2) +
+  geom_point(data = df_test, aes(x = GLUCOSE, y = SYSBP, color = (DEATH >= 0.5)))
+```
+
+
+We can see the classification boudnary on the data above... Our generated decision boundary is *okay* but not a great indication of the true bondary.
+
+
+##### d
+*
+
+For public health purposes it is more important to catch positives, i.e. potential mortality risks, even if they end up not eventuating. In other words, false negatives are more dangerous than false positives.
+
+In order to address this problem, we can change the threshold at which an patient is classified as being “risky”: Instead of setting the decision boundary at probability p =50%
+, we classify a customer as “risky” (i.e., we predict DEATH) if the risk of them dying is higher than 10%
+. Modify your logistic regression to do this, and repeat the tasks of question c).
+
+Compare the performance of logistic regression and discriminant analysis on this classification problem.
+*
+
+
+We will consider a number of Thresholds. 
+
+
+```{r}
+
+# Define thresholds explicitly
+thresholds <- seq(0.9, 0.1, by = -0.1)
+results <- data.frame(Threshold = numeric(), Misclassification_Rate = numeric())
+confusion_matrices <- list()
+#data
+for (threshold in thresholds) {
+  predicted_prob <- predict(model, newdata = df_test, type = "response")
+  predicted_class <- ifelse(predicted_prob > threshold, 1, 0)
+  misclassification_rate <- mean(predicted_class != df_test$DEATH)
+  results <- rbind(results, data.frame(Threshold = threshold, Misclassification_Rate = misclassification_rate))
+  
+  if (threshold %in% c(0.5,0.7, 0.1)) {
+    # R .. 
+    confusion_matrix <- table(Predicted = predicted_class, Actual = df_test$DEATH)
+    confusion_matrices[[as.character(threshold)]] <- confusion_matrix
+  }
+}
+
+
+
+
+
+kable(results, caption = "Misclassification Rates for Different Thresholds")
+
+ggplot(results, aes(x = Threshold, y = Misclassification_Rate)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Misclassification Rate vs. Classification Threshold",
+       x = "Classification Threshold",
+       y = "Misclassification Rate") +
+  theme_minimal()
+  
+  
+for (threshold in c(0.5,0.7, 0.1)) {
+  cat("\nConfusion Matrix for Threshold:", threshold, "\n")
+  print(confusion_matrices[[as.character(threshold)]])
+}
+
+
+```
+
+Graphing for values < *0.5* is not prudent given the domain; however we do see that the difference in misclassification rate as our threshold increases is rather small and such a change does not well increase the model's ability to determine the class given some input.
+
+
+
+
+##### D2: 
+
+We compare the performance of this data set against QDA using the inbuilt lib (manually implemented in p2 as well):
+
+
+```{r}
+ddata_t <- df_train
+ddata_t$DEATH <- as.factor(ddata_t$DEATH)
+qda_model <- qda(DEATH ~ GLUCOSE + SYSBP, data=ddata_t)
+df_test$DEATH <- as.factor(df_test$DEATH)
+qda_preds <- predict(qda_model, newdata=df_test)$class
+actual_classes <- df_test$DEATH
+lr_preds <- predict(model, newdata = df_test)
+
+
+```
+
+*We'll just reuse our matrix from earlier for log regression performance
+
+
+```{r}
+qda_conf_matrix <- table(Predicted = qda_preds, Actual = actual_classes)
+LR_CONF_MAT
+qda_conf_matrix
+```
+
+And calculating the residuals: 
+
+
+```{r}
+getstats <- function(conf_matrix) {
+  
+  TN <- conf_matrix[1, 1] 
+  FP <- conf_matrix[2, 1]  
+  FN <- conf_matrix[1, 2]  
+  TP <- conf_matrix[2, 2]
+  
+
+  sensitivity <- TP / (TP + FN)
+  specificity <- TN / (TN + FP)
+  accuracy <- (TP + TN) / (TP + TN + FP + FN)
+  
+  results <- list(
+    Sensitivity = sensitivity,
+    Specificity = specificity,
+    Accuracy = accuracy
+  )
+  
+  return(results)
+}
+
+lr_stats <- getstats(LR_CONF_MAT)
+qda_stats <-getstats(qda_conf_matrix)
+cat("Log.Reg: Sensitivity", lr_stats$Sensitivity,"Log.Reg: Specificity", lr_stats$Specificity,"Log.Reg: Accuracy", lr_stats$Accuracy,"\n")
+
+cat("QDA: Sensitivity", qda_stats$Sensitivity,"QDA: Specificity", qda_stats$Specificity,"QDA: Accuracy", qda_stats$Accuracy)
+
+```
+Noting we are just using the 0.5 thresehold as we didn't observe great improvements with changing that (to specificity, accuracy or sensitivty)
+
+
+Both models, approaches have similar accuracy (although this doesnt account fo rthe balance of FN / FP). The higher specificifty of our Log.Reg indicates that LR is marginally better at correctly identifying TN; however; for our domain, identifying TP is paramoutn and as such the higher sensitivty of QDA is (identifying TP ) is best; indicating that QDA may be the better of the models to select here (marginally).
+
+---
+
+##### D3
+
+
+
+The dataset contains more columns than simply Glucose, SYSBP and DEATH. To identify risk factors (i.e. factosr most associated with death)
+we can assess some summary statistics by grouping on DEATH = 1 and DEATH = 0 (note, I didn't remove other binary vars like SEX)
+
+The following simply calculates the % diff in our descriptive stat, we skip to the first non 200 value as those are artifacts of our negligence with not scrubbing binary cols.
+
+```{r}
+df_train_clean <- na.omit(df_train)
+```
+```{r}
+library(dplyr)
+
+# Summarize data by DEATH
+summary_by_death <- df_train_clean %>%
+  group_by(DEATH) %>%
+  summarise(across(everything(), list(mean = ~mean(., na.rm = TRUE),
+                                      sd = ~sd(., na.rm = TRUE),
+                                      median = ~median(., na.rm = TRUE),
+                                      IQR = ~IQR(., na.rm = TRUE))))
+
+
+
+
+
+summary_by_death
+
+
+
+zero_values <- summary_by_death[1, ]
+one_values <- summary_by_death[2, ]
+zero_values <- as.numeric(zero_values)
+one_values <- as.numeric(one_values)
+difference <- (abs(zero_values - one_values) / ((zero_values + one_values) / 2)) * 100
+summary_by_death <- rbind(summary_by_death, difference)
+third_row <- as.numeric(summary_by_death[3, ])
+ordered_columns <- order(third_row, decreasing = TRUE)
+summary_by_death <- summary_by_death[, ordered_columns]
+summary_by_death
+
+```
+Firstly; we simply see what vales are the most different between the two classes (row 1 = death = 0, row 2 = death = 1)
+
+We identify the two values whose means are most differentiated by classification:
+
+
+We see that these two values, particularly have signficant impact on the likelihood of death; that is Koalas with low MI_FHCD readings are much less at risk. We can discard the PREVSTRK death status.
+
+
+
+```{r}
+
+ggplot(df_train_clean, aes(x = MI_FCHD, fill = as.factor(DEATH))) +
+  geom_density(alpha = 0.5) +  # Density plot with transparency
+  labs(title = "Distribution of MI_FCHD by DEATH Status",
+       x = "RANDID",
+       y = "Density",
+       fill = "DEATH") +
+  theme_minimal()
+ggplot(df_train_clean, aes(x = PREVSTRK, fill = as.factor(DEATH))) +
+  geom_density(alpha = 0.5) +  # Density plot with transparency
+  labs(title = "Distribution of PREVSTRK by DEATH Status",
+       x = "RANDID",
+       y = "Density",
+       fill = "DEATH") +
+  theme_minimal()
+
+
+
+
+```
+This isn't really a strong indicator however; in fact we can fit a general L.R model as below. We don't find *any* particularly strong indicator vars (no P Values <0.05), in fact ALL are highly variable; atomically no individual explanatory variable indicates a high risk factor. Combinatorally this may not be the case. We could use some stepwise feature selection to remove features who are of no use / importance explanatorially.... The entire model summary is output below... 
+```{r}
+model <- glm(DEATH ~ ., data = df_train_clean, family = binomial())
+summary(model)
+```
+
+<br/>
+<br/>
+
+
+
+# Predicting Colour names w/ Discriminant Analysis for RG values of RGB (i.e. g = 0 for all instances;)
+
+
+
+```{r}
+#rm(list = ls())
+```
+
+###Preamble
+
+Data is given already as simply the R,B and a value of the set below describing it's colour (sans the G component; predicting the classification is done with QDA as follows... )
+Firstly; load the data; observe the features.
+
+Note: I was unsuccessful in matching the names of colours (dynamically) to their areas in the visualisation we see later. I apologise for the trouble that that causes to read / interpret!
+
+##### A
+```{r}
+
+# Load the data
+colordata <- read.csv("colors_train.csv", header = TRUE, sep = ",")
+
+colordata <- as.data.frame(colordata)
+num_unique_values <- length(unique(colordata$color))
+cat("The dataset contains", num_unique_values, "classes.\n")
+unique(colordata$color)
+unique_colors <- unique(colordata$color)
+unique_colors
+```
+
+```{r}
+
+train_size <- floor(0.8 * nrow(colordata))
+train_ind <- sample(seq_len(nrow(colordata)), size = train_size)
+df_train <- colordata[train_ind, ]
+df_test <- colordata[-train_ind, ]
+```
+
+##### B
+Fit a QDA algorithm to the dataset for calssification...
+
+
+
+
+Because we will generate some number of datapoints per class; we define the function as follows
+```{r}
+#Assuming R doesn't need to count len of df each time....
+# It's a tiny bit hard coded with our mean calcs as being explicitly for the R,B cols and not dynamic, b
+# But R is not a fun language to work with ! 
+manual_qda <- function(classname, df, column) { 
+  number_of_occurances <- df %>% filter(df[[column]] == classname) %>% nrow()
+  
+  pi <- number_of_occurances / nrow(df)
+
+  mean <- df %>%
+    filter(df[[column]] == classname) %>%
+    dplyr::select(-all_of(column)) %>%
+    colMeans()
+  sigma <- df %>% filter(df[[column]] == classname) %>% dplyr::select(r, b) %>% cov
+
+  #because R
+  return(list(pi = pi, mean = mean, sigma = sigma))
+}
+
+```
+```{r}
+delta_no <- function(X, mean, sigma, pi) {
+  return(-t(X - mean) %*% solve(sigma) %*% (X - mean) / 2 - log(det(sigma)) / 2 + log(pi))
+}
+```
+
+With the definitions above; we will (still manually) call some values and store them into explicit vars per colour channel.
+A more appropriate implementation is some dict equivalent; but for this purpose (and for the sake of avoiding R's cumbersome language) we simply define these explicitly 
+
+
+
+
+```{r}
+qda_results <- list()
+for (color in unique_colors) {
+  qda_results[[color]] <- manual_qda(color, df_train, "color")
+}
+```
+
+```{r}
+qda_results[1:2]
+```
+
+
+```{r}
+
+calculate_deltas_old <- function(qda_results, X) {
+  deltas <- list()
+  
+  for (color in names(qda_results)) {
+    mean <- qda_results[[color]]$mean
+    sigma <- qda_results[[color]]$sigma
+    pi <- qda_results[[color]]$pi
+    
+    delta_value <- delta_no(X, mean, sigma, pi)
+    
+    deltas[[color]] <- delta_value
+  }
+  
+  return(deltas)
+}
+
+```
+
+
+```{r}
+calculate_deltas <- function(qda_results, X) {
+  deltas <- sapply(names(qda_results), function(color) {
+    mean <- qda_results[[color]]$mean
+    sigma <- qda_results[[color]]$sigma
+    pi <- qda_results[[color]]$pi
+    
+    delta_no(X, mean, sigma, pi)
+  })
+  
+  max_label <- names(deltas)[which.max(deltas)]
+  
+  return(max_label)  # Just return the label with the highest delta value
+}
+QDA_test_res <- df_test
+QDA_test_res <- QDA_test_res %>% 
+  rowwise() %>% 
+  mutate(prediction = calculate_deltas(qda_results, c(r, b))) %>% 
+  ungroup()
+
+```
+```{r}
+QDA_test_res
+```
+We now have a useful, reproducable way to query all members of the class.... 
+
+
+```{r}
+X <- c(100, 100)  # Replace with R and B as needed 
+delta_results <- calculate_deltas(qda_results, X)
+print(delta_results)
+```
+
+
+```{r}
+
+# Create grid for visualization
+r_range <- seq(min(df_train$r) - 10, max(df_train$r) + 10, length.out = 100)
+b_range <- seq(min(df_train$b) - 10, max(df_train$b) + 10, length.out = 100)
+grid <- expand.grid(r = r_range, b = b_range)
+
+# Predict class labels for the grid points
+grid$color <- sapply(seq_len(nrow(grid)), function(i) {
+  calculate_deltas(qda_results, as.numeric(grid[i, ]))
+})
+
+# Plot decision boundaries
+ggplot() +
+  geom_point(data = df_train, aes(x = r, y = b, color = color), size = 3) +
+  geom_raster(data = grid, aes(x = r, y = b, fill = color), alpha = 0.3) +
+  scale_fill_manual(values = unique(df_train$color)) +
+  labs(title = "QDA Decision Boundaries", x = "r", y = "b") +
+  theme_minimal()
+
+```
+
+
+
+
+Noting the above: 
+Some difficulty was encountered in translating the label names for the named list (names of colours) into the colour regions on the graph. 
+
+c:
+
+We wish to query a specific point.... 
+
+Specificially: 
+
+R = 200 G = 0 B = 200, which we see on the graph in green:
+
+
+```{r}
+test_R = 200
+test_B = 200
+```
+
+
+
+```{r}
+ggplot() +
+  geom_point(data = df_train, aes(x = r, y = b, color = color), size = 3) +
+  geom_raster(data = grid, aes(x = r, y = b, fill = color), alpha = 0.3) +
+  scale_fill_manual(values = unique(df_train$color)) +
+    geom_point(aes(x = test_R, y = test_B), color = "green", size = 5, shape = 1, stroke = 3) +  # Highlight point + 
+  labs(title = "QDA Decision Boundaries", x = "r", y = "b") +
+  theme_minimal()
+```
+
+
+
+Testing our model on the point 200,0,200 and indeed it matches 'pink' as per the display above.
+
+
+Our algorithm defines this as pink.
+
+
+
+
+
+```{r}
+
+sample <- calculate_deltas(qda_results, c(test_R, test_B))
+sample
+```
+
+for a quick comparison:
+
+```{r}
+rs <- seq(0,256,5) 
+bs <- seq(0,256,5)
+df_plot_colors <- data.frame(rs = rs, bs=bs) %>% tidyr::expand(rs, bs)
+ggplot(data=df_plot_colors) + 
+  geom_point(aes(x=rs, y=bs, color=rgb(rs/256,0,bs/256)), size=1)+# R's rgb code works with numbers between 0 and 1 instead of between 0 and 255.
+  geom_point(aes(x = test_R, y = test_B), color = "green", size = 5, shape = 1, stroke = 3) +  # Highlight point + 
+  scale_color_identity() +
+  theme(legend.position = "none")
+```
+
+
+And indeed; looking to the original data graphed, we can see that 'pink' is a fair prediction
+
+#### d: 
+
+Knn Classification:
+
+An alternative approach to predicting values for unseen data is K-Nearest-Neighbours classification. Intuitively; we are looking for some number of neighbours to the query point based on some distance metric.
+
+KNN-Classification in it's regular case, simply will return the most often seen class of the k selections. We call this majority voting. 
+Intuitioniistically we must consider cases where there are ties in the votes. One option is simply increasing K until ties are mitigated. Another is to randomly choose a class of the tied pool. We will use weighted voting. i.e. the 'closer' the datapoint, the more important it is. This is trivially implemented by averaging the distances between each of the class points. 
+
+
+We use R's inbuilt function for this; which implements knn majority voting,
+
+Build a KNN model on df_train...
+```{r}
+
+k <- 5
+knn_test_res <- df_test
+# Convert color to a factor for knn
+df_train$color <- as.factor(df_train$color)
+df_test$color <- as.factor(df_test$color)
+
+train_features <- df_train %>% dplyr::select(r, b)
+train_labels <- df_train$color
+test_features <- df_test %>% dplyr::select(r, b)
+
+
+knn_predictions <- knn(train = train_features, 
+                        test = test_features, 
+                        cl = train_labels, 
+                        k = k)
+
+knn_test_res <- knn_test_res %>% 
+  mutate(prediction = knn_predictions)
+```
+
+
+```{r}
+
+
+misclassified_QDA <- QDA_test_res %>% 
+  filter(prediction != color) %>% 
+  nrow()
+misclassified_KNN <- knn_test_res %>% 
+  filter(prediction != color) %>% 
+  nrow()
+total <- nrow(df_test)
+misclassification_rate_KNN <- misclassified_KNN / total
+misclassification_rate_QDA <- misclassified_QDA / total
+misclassification_rate_KNN
+misclassification_rate_QDA
+```
+
+Convieniently; our data is in 2space; sampling from KNN is convient to think about; in fact it's very clear how just adding more points to the dataset would improve our knn model somewaht irrespective of their distribution... 
+
+
+At *k = 5* our misclassification rate precisely matches between QDA and KNN. (increasing K to a point where the sampling is across colour areas)
+
+
+Remembering our test point which classified as *pink* with qda...
+We can manually compute the distances on our test locations to get an idea of the *window* that knn 'creates
+
+```{r}
+#same as before
+test_point <- data.frame(r = test_R, b = test_B)
+knn_prediction <- knn(train = train_features, 
+                       test = test_point, 
+                       cl = train_labels, 
+                       k = k)
+
+distances <- as.matrix(dist(rbind(train_features, test_point)))
+n_train <- nrow(train_features)
+test_distances <- distances[(n_train + 1), 1:n_train]
+
+sorted_indices <- order(test_distances)
+nearest_indices <- sorted_indices[1:k]
+
+neighbors_values <- train_features[nearest_indices, ]
+neighbors_labels <- train_labels[nearest_indices]
+
+neighbors_df <- data.frame(r = neighbors_values$r,
+                            b = neighbors_values$b,
+                            color = neighbors_labels)
+
+neighbor_color <- "black"
+
+# Plot using ggplot2
+ggplot() +
+  geom_point(data = df_test, aes(x = r, y = b, color = color), size = 3) +
+  geom_raster(data = grid, aes(x = r, y = b, fill = color), alpha = 0.3) +
+  scale_fill_manual(values = unique(df_train$color)) +
+  annotate("point", x = test_R, y = test_B, color = "red", size = 5, shape = 5) +
+  annotate("text", x = test_R, y = test_B, label = "Test Point", vjust = -1, color = "Black") +
+  geom_point(data = neighbors_df, aes(x = r, y = b), color = neighbor_color, shape = 1, size = 5, show.legend = FALSE) +
+  scale_color_manual(values = unique(df_test$color)) +
+  labs(title = "QDA Decision Boundaries with KNN neighbours", x = "r", y = "b") +
+  theme_minimal()
+
+```
+
+
+Above we see the *test* point; which evaluates to pink for qda and for knn. Note that the KNN locations of our data (df test is graphed, but these originate in df_train..) are shown as open circles, and covnieneintly, on this graph, we can simply use the majority fill of the colour in that open circle as an identifier (for human readability). 
+
+
+
+We can 
+
+```{r}
+
+results <- list()
+k_values <- 1:100
+
+for (k in k_values) {
+
+  knn_predictions <- knn(train = train_features, 
+                          test = test_features, 
+                          cl = train_labels, 
+                          k = k)
+  
+  knn_test_res <- df_test %>% 
+    mutate(prediction = knn_predictions)
+  
+  misclassification_rate <- mean(knn_test_res$color != knn_test_res$prediction)
+  results[[as.character(k)]] <- misclassification_rate
+}
+
+# Convert results to a dataframe for ggplot
+results_df <- data.frame(
+  k = as.integer(names(results)),
+  misclassification_rate = unlist(results)
+)
+
+
+
+ggplot(results_df, aes(x = k, y = misclassification_rate)) +
+  geom_line(color = "blue") +
+    geom_hline(yintercept = misclassification_rate_QDA, linetype = "dashed", color = "red") +
+  labs(title = "Misclassification Rate vs. Number of Neighbors (k)",
+       x = "Number of Neighbors (k)",
+       y = "Misclassification Rate") +
+  annotate("text", x = max(results_df$k), y = misclassification_rate_QDA, 
+           label = paste("QDA Rate:", round(misclassification_rate_QDA, 3)),
+           hjust = 1.1, vjust = -0.5, color = "red") +
+  theme_minimal()
+```
+
+It's notable that with all but the 14 and 17 values; qda obtains a better misclassification rate (that is, where any class other than the correct was chosen). 
+
+At times, in this document, we have mentioned 'colour zones'; which are reflected in the decision boundaries in our qda analysis, but are also prevalent in the source data. As K increases, the likelihood of sampling in multiple 'zones'  also increases; and cases of voting are more common. We would expect that k-nn would be particularly good (see accurate) on average, closer to the 'center' of a cluster of these colours.
+
+QDA is the better choice here, given our data. In terms of computability neither offers a particularly invasive overhead; asymptotically; neither is of concern (we assume R isn't simply sorting the entire dataset on each point)
+
+
+QDA assumes that the data for each class follows a Gaussian distribution with a different covariance matrix for each class, which means it performs well when the classes have distinct and well-defined covariance structures. This makes QDA the most suitable for situations where we can reasonably expect the data to be normally distributed within each class and where the classes have different spread or orientation.
+
+
+KNN on the other hand doesn't make any of these assumptions, and as we've seen just considers neighbours. 
+
+
+We can make asumptions about the data from intuition behind our perception of colour (as per the dots above) and it holds that QDA is the best choice here.
+
+Were the data more 'randomly' distributed, KNN would be a better choice; as would be the case in some higher dimension.
+
+
+
+
+
+

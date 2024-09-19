@@ -1,0 +1,1145 @@
+---
+title: "Q1"
+author: "Noah King"
+date: "2024-08-14"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+
+
+---
+title: "STAT462ASS_1"
+author: "Noah King"
+date: "2024-08-06"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library("ggplot2")
+library(magrittr)
+library(dplyr)
+
+library(knitr)
+
+
+set.seed(1234)
+```
+
+
+
+Disclaimer:
+ChatGPT used to generate lateX (usually).
+P3q7 not implemented.
+environment reset on each question.
+
+
+### Part 1: Braking Distance Estimation
+##### Preamble
+
+For the following 3 examples, we will consider trained models as a means to make estimations on unseen data from several datasets.
+
+
+
+Firstly; we consider the *braking.csv* dataset; the dataset records the approximate braking distance (ft) given the vehicle's speed (MPH); we wish to predict stopping distance given speed, although swapping the predictor and response variables is trivial. Ultimately we will generate some linear model with some degree of error (as a perfect regression here would be non linear). We will not perform steps to minimize some loss; instead we will assess our first model, more later. 
+
+
+
+
+
+##### 1
+
+
+The braking data is given in terms of MPH/FT; we convert these to metric in place with R functions after loading the *braking.csv* file into memory; 
+
+
+```{r}
+#data files just in the same dir
+braking_data <- read.csv("braking.csv", header=TRUE, sep=",")
+print(braking_data[1, ])
+
+mph_to_kmh <- function(mph) {
+  kmh <- mph * 1.60934
+  return(kmh)
+}
+
+ft_to_m <- function(ft) {
+  meters <- ft * 0.3048
+  return(meters)
+}
+braking_data$speed <- mph_to_kmh(braking_data$speed)
+braking_data$dist <- ft_to_m(braking_data$dist)
+print(braking_data[1, ])
+```
+#### 2
+
+In order to conduct our regression model; we split the data into train and test with ratio 4:1. (Note the dataset is only 50 rows in length, however for arbitrary lengths we assign 'approximately' 80% of data to training and the remainder as test by just rounding down)
+
+```{r}
+n = nrow(braking_data)
+train_ind <- sample(1:nrow(braking_data), size = nrow(braking_data) * 0.8)
+df_train <- braking_data[train_ind, ]
+df_test <- braking_data[-train_ind, ]
+
+cat("The training set contains", nrow(df_train), "rows, while the test set contains", nrow(df_test), "rows.\n")
+```
+
+
+In order to make estimations on unseen data; we will create a linear regression model; of the format :
+
+$$
+\hat{y} = \hat{\beta}_0 + \hat{\beta}_1 x
+$$
+
+
+For convenience:
+```{r}
+x <- df_train$speed
+y <- df_train$dist
+```
+
+
+We compute this manually as below; where we apply the standard definitions for intercepts and gradients:
+
+
+   The slope \( b_1 \) of the regression line is given by:
+
+   \[
+   b_1 = \frac{\text{cov}(x, y)}{\text{var}_x}
+   \]
+
+   The intercept \( b_0 \) is:
+
+   \[
+   b_0 = \text{mean}_y - b_1 \cdot \text{mean}_x
+   \]
+   
+   
+```{r}
+mean_x <- mean(x)
+mean_y <- mean(y)
+n <- length(x)
+x_var <- sum((x - mean_x) ^ 2) / (n - 1)
+x_sd <- sqrt(x_var)
+xy_cov <- sum((x-mean(x)) *(y-mean(y)))/(n-1)
+
+
+b_1_h <- xy_cov / x_var
+b_0_h <- mean_y - b_1_h * mean_x 
+
+lr_func <- function(b0h,b1h,x) {
+  a <- b0h + (b1h*x)
+  return(a)
+}
+
+
+```
+
+
+We also define the lr_func to simply return a function whose value is defined by these given x.
+
+```{r}
+
+
+p <- ggplot(data = df_train, aes(x = speed, y = dist)) +
+  geom_point(color = "black", alpha = 0.3) +
+  ylim(0, 50) + 
+  geom_abline(intercept = b_0_h, slope = b_1_h, color = "blue") +
+  labs(title = "Stopping Distance of Vehicles given Speed") + 
+  annotate("text", x = max(df_train$speed), y = b_0_h + b_1_h * max(df_train$speed), 
+           label = "Estimate Function", hjust = 1, vjust = -0.5, color = "blue")
+
+p
+
+```
+
+Above; we see the training dataset relative to the regression line. In terms of mean squared error (simply the distance between each of these points and the value of the estimate function of that explanatory var in terms of dist) this is the optimal model.
+
+   
+   
+
+
+```{r echo = FALSE}
+
+cat(sprintf("Our initial model yields an intercept of %.2f and gradient of %.2f. for this selection of randomized test/ train", b_0_h, b_1_h))
+
+```
+
+
+##### 2a
+
+The LR. model we generate is simply a linear function in *2 space* and thusly we can determine the following: 
+```{r}
+
+
+speed_change <- 5
+change_dist <- b_1_h * speed_change 
+change_dist
+
+
+
+
+```
+
+
+```{r echo = FALSE}
+
+cat(sprintf("We should therefore expect that a change in speed of + %.2f shall usually increase stopping time %.2f meters.", speed_change, change_dist))
+
+```
+
+That is; according to our slope we expect `change_dist` per five additional kilometeres (meters)
+
+
+
+
+#### 2b:
+
+We can use the R^2 Metric to understand the variance of our model; We manually compute the metric as below (the R code below is reasonably self documenting).
+
+By evaluating R^2 , we can gain insight into how well our model explains the variability of the response variable, (i.e. speed) . A higher  R^2 indicates a better fit and a greater degree of variance explained by the model; Essentially; we consider R^2 a measure of the *goodness of fit* of our model relative to other members of the *model space* 
+
+
+```{r}
+df_train$predicted_dist <- lr_func(b_0_h,b_1_h,x)
+print(head(df_train, 2))
+```
+
+We create a column of the predicted values..... 
+
+```{r}
+ESS <- sum((df_train$predicted_dist - mean_y) ^ 2)
+TSS <- sum((df_train$dist - mean_y) ^ 2)
+R_square = ESS/TSS
+cat("The Explained Sum of Squares (ESS) is", ESS, ", the Total Sum of Squares (TSS) is", TSS, ", and therefore the R² metric is:", R_square, "\n")
+```
+
+For this sample (and also the 80% sampled of that sample for our train data), the R^2 value is `R_square; indicating a relatively good fit; that is around 61.7% of the variance is explainable by the regression model
+
+The relationship here is only *moderately strong*. 
+
+
+2c:
+Further to the idea of the relationship as *moderately strong*, we consider whether speed is a signficiatn predictor for dist (i.e. speed vs braking distance) at some confidence level (i.e proportion of times that conf. interval would contain our true theta (true y))
+
+Note, obviously we don't know population variance; so as such we construct intervals of the following form: 
+
+
+Our intervals are constructed about the mean of our dataset: 
+
+In R code this takes the form: 
+```{r}
+n <- nrow(df_train)
+alpha <- 0.05
+mean_x <- mean(df_train$speed)
+sigma_sq <- (1 / (n - 1)) * sum((df_train$speed - mean_x)^2)
+se <- sqrt(sigma_sq / n)
+dof <- n - 1
+t_critical <- qt(1 - alpha / 2, df = dof)
+l <- mean_x - (t_critical * se)
+r <- mean_x + (t_critical * se)
+
+cat(sprintf("Mean: %.4f\n", mean_x))
+cat(sprintf("95%% Confidence Interval: [%.4f, %.4f]\n", l, r))
+```
+Note; as our confidence interval does not include zero; we can be sure that at the 95% level that indeed speed is a significant predictor for stopping distance.
+
+
+
+Therefore; we can infer that at a 95% confidence interval; our data exists within
+##s speed a significant predictor for dist at the 95% confidence level?
+
+
+
+#### 2d
+
+As we mentioned earlier (and also the entire inclusion of confidence intervals alludes to) our sample cannot perfectly reflect the pop. 
+Therefore; our regression model is *good within some degree of accuracy*. 
+
+A sample query of our regression model is *If Im going 30kmh, what is the max / min distance which I will actually stop in* and we can compute that as follows:
+
+$$
+\hat{y} = \hat{\beta}_0 + \hat{\beta}_1 \cdot X
+$$
+
+$$
+\text{RSS} = \text{TSS} - \text{ESS}
+$$
+
+$$
+\sum(X_i - \bar{X})^2 = \sum_{\text{i=1}}^n (X_i - \bar{X})^2
+$$
+
+$$
+\text{SE}(\hat{y}) = \sqrt{\left(\frac{1}{n} + \frac{(X - \bar{X})^2}{\sum(X_i - \bar{X})^2}\right) \cdot \frac{\text{RSS}}{n - 2}}
+$$
+
+$$
+\alpha = 1 - \frac{\text{confidence\_level}}{100}
+$$
+
+$$
+\text{df} = n - 2
+$$
+
+$$
+t_{\text{critical}} = t\left(1 - \frac{\alpha}{2}, \text{df}\right)
+$$
+
+$$
+\text{Lower Bound} = \hat{y} - t_{\text{critical}} \cdot \text{SE}(\hat{y})
+$$
+
+$$
+\text{Upper Bound} = \hat{y} + t_{\text{critical}} \cdot \text{SE}(\hat{y})
+$$
+Or in R code:
+
+```{r}
+speed <- 30
+certainty <- 80 #percent
+```
+```{r}
+pred_sped <- lr_func(b_0_h, b_1_h, speed)
+RSS <- TSS - ESS
+sum_squared_diff <- sum((df_train$speed - mean_x)^2)
+se_pred <- sqrt((1 / n + (speed - mean_x)^2 / sum_squared_diff) * RSS / (n - 2))
+alpha <- 1-(certainty/100)
+df <- n - 2
+t_critical <- qt(1 - alpha / 2, df)
+lower_bound <- pred_sped - t_critical * se_pred
+upper_bound <- pred_sped + t_critical * se_pred
+
+```
+
+```{r echo=FALSE}
+cat(sprintf("Predicted braking distance for a car going at %.1f km/h: %.2f meters\n", speed, pred_sped))
+cat(sprintf("Bounded in [%.2f, %.2f] meters\n", lower_bound, upper_bound))
+```
+
+#### Predictions given K-NN
+
+KNN is an alternate approach for finding relationships in data and generating a model; 
+We can consider KNN topologically; in <4 space we're simply making a prediction by averaging the neighbours of our input variable. In our example, we consider only the *distance* on the *speed* variable; which is more easily labelled *the x axis*.  
+
+
+```{r}
+k <- 10
+
+
+kNN <- function(data, k_ = 5, x0, y0, xstar){
+  ystar <- data %>% 
+    mutate(dist_diff = abs(!!as.name(x0)-xstar)) %>% 
+    arrange(dist_diff) %>% 
+    slice(1:k_) %>% 
+    pull(!!as.name(y0)) %>% 
+    mean()
+
+  return (ystar)
+}
+
+kNN(data = df_train, k_ = k, x0 = "speed", y0 = "dist", xstar = 30)
+
+
+```
+We can show that for k=10; a vehicle travelling at 30kmh would take the 16 or so meters above to stop... According to the KNN model:
+
+
+```{r}
+k_values <- 1:30
+results <- data.frame(
+  k = k_values,
+  predicted_dist = sapply(k_values, function(k_) kNN(data = df_train, k_ = k_, x0 = "speed", y0 = "dist", xstar = 30))
+)
+
+# Plot the results
+ggplot(results, aes(x = k, y = predicted_dist)) +
+  geom_line(color = "blue") +
+  geom_point(color = "blue") +
+  labs(title = paste("kNN Predictions for k =", 40),
+       x = "Number of Neighbors (k)",
+       y = "Predicted Stopping Distance") +
+  theme_minimal()
+```
+
+While can use our KNN model to make predictions, but we must note: Our sample is *small* and the accuracy (see precsion) of the prediction we make considers the K (the number of neighbours) and also the skew, or outliers in the data.
+
+
+
+
+Note that we can confirm our KNN, when scoped to the entire dataset, produces the mean for distance.
+Remembering again that this sample is only 40 deep; KNN doesn't provide a particularly insightful measure of *accuracy*; rather were *n* to increase; we could make greater assumptions; also we are operating only in R^1 here; Knn in R^2 is an option, we will see this later on.
+
+##### relative performance of KNN vs LR
+
+
+```{r}
+x_range <- seq(from = floor(min(df_train$speed)), to = ceiling(max(df_train$speed)), by = 1)
+predictions <- sapply(x_range, function(xstar) kNN(data = df_train, k_ = k, x0 = "speed", y0 = "dist", xstar = xstar))
+
+predictions_df <- data.frame(
+  speed = x_range,
+  predicted_dist = predictions
+)
+
+
+
+ggplot(data = df_train, aes(x = speed, y = dist)) +
+  geom_point(color = "black", alpha = 0.3) +   # Original data points
+  geom_line(data = predictions_df, aes(x = speed, y = predicted_dist), color = "orange", linetype = "solid") +  # kNN predictions
+geom_abline(intercept = b_0_h, slope = b_1_h, color = "blue") +
+  labs(title = "kNN and Regression Line Predictions across Speed Range (TRAINING)",
+       x = "Speed (km/h)",
+       y = "Stopping Distance") +
+  theme_minimal()
+
+```
+So what of testing?
+
+We run, again, into the issue of selecting *k*. Our test set is only *10* rows and the train set only *40*.
+
+Nonetheless; we consider the speed values in the df_test set against the df_train model... 
+
+We have selected 3 here, values greater than three are essentially useless
+
+
+```{r}
+# Define the number of neighbors
+k <- 10
+
+
+# Predict the stopping distance for a vehicle traveling at 30 km/h
+
+predictions_knn <- sapply(df_test$speed, function(xstar) kNN(data = df_train, k_ = k, x0 = "speed", y0 = "dist", xstar = xstar))
+
+# Create a data frame for plotting
+predictions_df_knn <- data.frame(
+  speed = df_test$speed,
+  predicted_dist = predictions_knn
+)
+
+
+x_range <- seq(from = floor(min(df_test$speed)), to = ceiling(max(df_test$speed)), by = 1)
+
+
+ggplot(data = df_test, aes(x = speed, y = dist)) +
+  geom_point(color = "black", alpha = 0.3) +   
+  geom_line(data = predictions_df_knn, aes(x = speed, y = predicted_dist), color = "orange", linetype = "solid") +  
+  geom_abline(intercept = b_0_h, slope = b_1_h, color = "blue") +
+   geom_point(data = df_test, aes(x = speed, y = dist), color = "red", alpha = 0.5, size = 2, shape = 16, label = "Testing Data") +
+   geom_segment(data = df_test, aes(x = speed, xend = speed, y = dist, yend = sapply(speed, function(x) kNN(data = df_train, k_ = k, x0 = "speed", y0 = "dist", xstar = x))), color = "purple", linetype = "dashed") +
+  
+  # Labels and theme
+  labs(title = "kNN and Regression Line Predictions across Speed Range (TESTING)",
+       x = "Speed (km/h)",
+       y = "Stopping Distance") +
+  
+  theme_minimal()
+```
+
+Above; we see the *orange* KNN model @ 10 and the regression model (also one set of differences). 
+
+It is challenging (because the test set is so small) to determine which is the most accurate model. For the entirety of the dataset: MSE is calculated as such:
+
+We can assess the MSE more specifically: 
+
+
+```{r}
+predicted_dist_lr <- lr_func(b_0_h, b_1_h, df_test$speed)
+mse_lr <- mean((df_test$dist - predicted_dist_lr) ^ 2)
+mse_lr
+
+predictions_knn <- sapply(df_test$speed, function(xstar) kNN(data = df_train, k_ = k, x0 = "speed", y0 = "dist", xstar = xstar))
+mse_knn <- mean((df_test$dist - predictions_knn) ^ 2)
+mse_knn
+
+```
+
+At k = 10, the MSE is much *worse* for our KNN model; specifically.
+
+Due to the small size of our sample, it is a poor choice for generating predictions for this data. Changing K can / will impact this; however the regression model remains best (linear). 
+
+
+
+```{r}
+rm(list = ls())
+```
+Resetting for atomicity between questions.
+
+
+
+As before; we will generate linear regression models such that we can predict unseen data:
+
+The datset *fillipino household income* can be used to make this kind of prediction;
+
+
+From the *dataset for Filipino HouseHold Income* we can make some inferences about household income for new, unseen data. While the dataset here contains 60 columns; see 59 predictors for predicting some single variable; we will consider only the relationship between the number of children (5-17) in a household and the relative household income. 
+
+
+```{r}
+income <- read.csv("income.csv", header=TRUE, sep=",")
+print(ncol(income))
+```
+
+Note that the entire dataset is around 22MB uncompressed; for convenience we will drop all but the two concerned columns; Our predictive model will consider the Total Household income relative to the number of children in said household between 5 and 17 years of age in the Phillipines.
+
+
+
+1:
+Firstly; as the dataset itself is ~22mb; we drop all but the concerned columnss (as a above) and rename them for convienience
+
+```{r}
+income <- income[, c("Total.Household.Income", "Members.with.age.5...17.years.old"), drop = FALSE]
+colnames(income)[colnames(income) == "Total.Household.Income"] <- "income"
+colnames(income)[colnames(income) == "Members.with.age.5...17.years.old"] <- "children"
+
+```
+
+
+
+Note that the value for *number of children* is discrete (nobody has half a child) making the comment from part 1 about swapping the pred/eval variables not applicable here.
+The values are bounded between 0 and 8
+
+```{r}
+max_value <- max(income$children)
+max_value
+min_value <- min(income$children)
+min_value
+```
+
+
+
+2:
+As usual for any ML training, we split our data into test / train at 4:1 ratio. 
+As before; it is unlikely that each time we make a random split that the row counts persist, We expect 80% +/- 1 row (non leaking)
+We are not using a validation set for this exploration.
+```{r}
+train_ind <- sample(1:nrow(income), size = nrow(income) * 0.8)
+df_train <- income[train_ind, ]
+df_test <- income[-train_ind, ]
+
+print(nrow(df_train))
+print(nrow(df_test))
+print(nrow(income))
+```
+3:
+Now; using in built functions we generate our linear model as in part 1; 
+
+income = b0 + b1 * childre
+
+We are looking to fit the above formula again; this is a simple linear function with intercept and gradient b0, b1...
+
+
+```{r}
+model <- lm(income ~ children, data = df_train)
+summary(model)
+b0 <- as.numeric(coef(model)[1])
+b1 <- as.numeric(coef(model)[2])
+
+b0
+b1
+
+```
+```{r}
+b0
+```
+
+
+```{r}
+b1
+```
+We can simply read off the model; with zero children we should expect ₱`r format(b0, digits = 5, nsmall = 2)` with a decrease of ₱`r format(b1, digits = 5, nsmall = 2)` per child between 5 and 17.
+
+Later, we will briefly look into some socioeconomic reasons that we see a decrease. Not that this dataset is given in *Phillipine Pesos* who currently convert at around *0.028 NZD = 1 PHP*. For the sake of readability, all currencies in this document are given to 2dp, although for the purpose of the model we simply use R's inbuilt floating point precision. 
+
+
+
+
+
+```{r}
+# Format Labels to be readable 
+format_y_labels <- function(x) {
+  format(round(x, 0), big.mark = ",", scientific = FALSE)
+}
+
+
+p <- ggplot(data = income, aes(x = children, y = income)) +
+  geom_point(color = "black", alpha = 0.3) +
+  geom_abline(intercept = b0, slope = b1, color = "blue") +
+  labs(title = "Income vs. Number of Children (all data)",
+       x = "Number of Children",
+       y = "Income") +
+  theme_minimal() +
+  scale_y_continuous(labels = format_y_labels)  # Apply custom label formatting
+
+print(p)
+```
+Immediately apparent from the dataset is that our data is strongly aggregated toward the *lower* parts of our scale.
+The regression line is given in *blue* for our model; it is indeed decreasing.
+
+Whether or not to consider extreme values as outliers is a matter of the domain; here, deciding to remove them is imprudent, as there's 'no good reason' that the data cannot exist and be true.
+
+
+
+This is the entire dataset; questioning note that we will not remove any outlying data. While our regression line appears flat; it is infact decreasing as we expect; The distribution of wealth / income is best described by the logarithmic graph as follows:
+
+```{r}
+
+
+p <- ggplot(data = income, aes(x = children, y = income)) +
+  geom_point(color = "black", alpha = 0.3) +
+  geom_abline(intercept = b0, slope = b1, color = "blue") +
+  labs(title = "Income vs. Number of Children (all data)",
+       x = "Number of Children",
+       y = "Income") +
+  theme_minimal() +
+  scale_y_log10(labels = format_y_labels)  # Apply custom label formatting
+
+print(p)
+
+```
+
+For each of the 8 discrete number of *children* values; we calculate their mean and upper/lower bounds @90% certainty (90% pred intervals)
+
+
+
+
+For example; We can see as follows that the distribution for *zero children* is very centralised
+
+```{r}
+zerokids <- subset(df_train, children ==0 )
+
+label_format <- function(x) {
+  format(x, big.mark = ",", scientific = FALSE)
+}
+
+ggplot(zerokids, aes(x = income)) +
+  geom_density(fill = "blue", alpha = 0.5) +
+  labs(title = "Income Density for Households with 0 Children",
+       x = "Income",
+       y = "Density") +
+  scale_x_continuous(labels = label_format) +
+  scale_y_continuous(labels = label_format) +
+  theme_minimal()
+
+```
+3b
+Again, using in built methods we have the following:
+
+```{r}
+new_data <- data.frame(children = 0:8)
+predictions <- predict(model, newdata = new_data, interval = "prediction", level = 0.1)
+
+
+
+```
+
+```{r}
+
+predictions_df <- data.frame(
+  children = new_data$children,
+  fit = predictions[, "fit"],
+  lwr = predictions[, "lwr"],
+  upr = predictions[, "upr"]
+)
+kable(predictions_df, 
+      col.names = c("Number of Children", "Predicted Income", "Lower Bound (10%)", "Upper Bound (90%)"), 
+      caption = "Predicted Income with 10% Prediction Intervals for Different Numbers of Children",
+      digits = 2) # Format the numbers to 2 decimal places
+
+ggplot(predictions_df, aes(x = children, y = fit)) +
+  geom_point(color = "blue", size = 2) + 
+  geom_line(color = "blue") + 
+  geom_ribbon(aes(ymin = lwr, ymax = upr), alpha = 0.2, fill = "lightpink") + 
+  labs(title = "Predicted Income with Prediction Intervals",
+       x = "Number of Children",
+       y = "Predicted Income") +
+  theme_minimal()
+```
+For each of the predictions given #of children (here represented as n+1 from zero) we can see the 90% confidence intervals (the lower abd upr bounds) around the predicted values @ 0 through 8 children.
+(the two bounds represented in pink)
+
+
+
+
+3c
+We use our test set to determine the actual performance of the model on unseen data; There are many applicable metrics; but a simple, cursory calculation is simply determining the overall proportion of data which falls within our confidence intervals in the test set...
+
+We do that as follows; we use the inbuilt predict to find mean, bounds, simply filter out members of the test set who are not bounded and we have our percentage
+```{r}
+predictions <- predict(model, newdata = df_test, interval = "prediction", level = 0.9)
+predicted <- predictions[, "fit"]
+lower_bound <- predictions[, "lwr"]
+upper_bound <- predictions[, "upr"]
+within_interval <- df_test$income >= lower_bound & df_test$income <= upper_bound
+count_within_interval <- sum(within_interval)
+total_points <- length(within_interval)
+percent_within_interval <- (count_within_interval / total_points) * 100
+
+cat("Number of points within the interval:", count_within_interval, "\n")
+cat("Total number of points:", total_points, "\n")
+cat("Percentage within the interval:", percent_within_interval, "%\n")
+
+```
+
+4:
+Earlier, we noticed that it is difficult to build a model which accounts for the large concentration of data points around the mean.
+As a means to mitigate this (and lessen the effect of outlying data) we now move forward with predicting log_income = log(income).
+
+Firstly; we transform the data (for the sake of convienience we  do this in place)
+
+```{r}
+df_train$log_income <- log(df_train$income)
+df_test$log_income <- log(df_test$income)
+```
+
+... fitting the model...
+
+```{r}
+log_model <- lm(log_income~children, data=df_train)
+summary(log_model)
+b0 <- as.numeric(coef(log_model)[1])
+b1 <- as.numeric(coef(log_model)[2])
+
+b0
+b1
+```
+We see an intercept; but a very flat increaese for the log income. 
+
+
+Our predictions at 90% again
+```{r}
+log_predictions <- predict(log_model, newdata = new_data, interval = "prediction", level = 0.9)
+```
+
+```{r}
+log_test_predictions <- predict(log_model, newdata = df_test, interval = "prediction", level = 0.9)
+log_predicted <- log_test_predictions[, "fit"]
+log_lower_bound <- log_test_predictions[, "lwr"]
+log_upper_bound <- log_test_predictions[, "upr"]
+log_within_interval <- df_test$log_income >= log_lower_bound & df_test$log_income <= log_upper_bound
+log_count_within_interval <- sum(log_within_interval)
+log_total_points <- length(log_within_interval)
+log_percent_within_interval <- (log_count_within_interval / log_total_points) * 100
+
+cat("Percentage within the log-transformed interval:", log_percent_within_interval, "%\n")
+```
+
+```{r}
+
+
+# Create new data for prediction
+new_data <- data.frame(children = 0:8)
+
+# Predict on new data (log-transformed predictions)
+non_log_predictions <- predict(model, newdata = new_data, interval = "prediction", level = 0.1)
+
+# Generate predictions for the log-transformed model
+# Ensure you have fitted the model for log_income
+log_predictions <- predict(log_model, newdata = new_data, interval = "prediction", level = 0.1)
+
+# Transform log predictions back to original scale
+log_predictions_original_scale <- exp(log_predictions) - 1
+
+# Combine both prediction results into a single data frame
+predictions_combined <- data.frame(
+  children = new_data$children,
+  fit_non_log = non_log_predictions[, "fit"],
+  lwr_non_log = non_log_predictions[, "lwr"],
+  upr_non_log = non_log_predictions[, "upr"],
+  fit_log = log_predictions_original_scale[, "fit"],
+  lwr_log = exp(log_predictions[, "lwr"]) - 1,
+  upr_log = exp(log_predictions[, "upr"]) - 1
+)
+
+# Plot both log and non-log predictions with their bounds
+ggplot(predictions_combined, aes(x = children)) +
+  # Non-log predictions
+  geom_line(aes(y = fit_non_log), color = "blue", linetype = "solid") +
+  geom_ribbon(aes(ymin = lwr_non_log, ymax = upr_non_log), alpha = 0.2, fill = "lightblue") +
+  
+  # Log-transformed predictions
+  geom_line(aes(y = fit_log), color = "red", linetype = "dashed") +
+  geom_ribbon(aes(ymin = lwr_log, ymax = upr_log), alpha = 0.2, fill = "lightcoral") +
+  
+  labs(title = "Predicted Income with Prediction Intervals",
+       x = "Number of Children",
+       y = "Predicted Income") +
+  theme_minimal()
+```
+
+4/5:
+At a high level; we firstly consider the negative gradient in the first model; while the Phillipines govt does maintain a program similar to *working for families* in the form of a cash payment; it is not accessible to all and there is extensive evidence that succeptability to poverty is proportional to family size. [https://scholarspace.manoa.hawaii.edu/server/api/core/bitstreams/cd83470d-e91a-483f-ac29-643b3476e627/content].
+
+With that in mind; our *decreasing* gradient is justified.
+
+Our goal, with fitting the logarithmic model; was to mitigate the effect of outliers; as is typical in income data, there are outliers whose occurance is legitimate; yet non mitigable. We transform the original data to reduce the effects of those outliers on our residuals. The lost information (to the model, recoverable trivially) is, for our use, not of particular importance.
+
+After applying the log transformation, the means of the dataset and the prediction intervals tend to be lower and more centralized. This centralization reflects the reduced influence of extreme values and provides a model that is more focused on the central portion of the data.
+
+Intuitively; while we care about the bulk of the information the *most*; it is clear that we can no longer *accurately* predict outliers (where accurately means with as much accuracy) as information is lost to the top end of the *logarithmic* func. 
+
+- Is this a good fit for our data / predictor / use-case? 
+
+Because, as we saw earlier, the data is so heavily concentrated around the mean and so heavily skewed; this context *is* a good fit... *in some cases*; 
+In outlier-critical cases, like government policy creation, we would prioritize a direct understanding of income levels.
+
+In cases like retail pricing analysis or dynamic pricing, where people over some threshold are all a member of the same ceiling, but where we care about small changes on a smaller scale; it holds that using the logarithmic model is prudent. 
+
+
+
+# Predicting Possum Age
+```{r}
+rm(list = ls())
+```
+
+
+Firstly; We consider the dataframe created from our possum dataset; note that here we handle all rows containing *NA* values by simply removing them.
+
+```{r}
+
+#data files just in the same dir
+pdata <- read.csv("possums.csv", header=TRUE, sep=",")
+pdata <- pdata[!is.na(pdata$age), ]
+pdata <- na.omit(pdata)
+print(pdata[1, ])
+```
+In this section we explore *multiple regression*. It holds that predicting a value given more than one explanatory variable should help to create more accurate predictions than a binary relationship; however; creating a linear separation is not always possible and we will explore creating a separation in higher spaces.
+
+
+
+To create the optimal model, we wish to select features that are independent, ceteribus paribus, meaning that when all other variables are held constant, each feature’s contribution to the model should be distinct and not redundant with other features.... 
+
+However, we also wish to select features that best explain the variability in the predictor.
+
+1:
+
+```{r}
+ggplot(pdata, aes(x = totlngth, y = age)) +
+  geom_point(color = "blue", alpha = 0.5) +
+  labs(title = "Age vs. Total Length of Possums with Trend Line",
+       x = "Total Length (cm)",
+       y = "Age (years)") +
+  theme_minimal()
+```
+
+
+
+We can see a very slight correlation, a few outliers; there is nothing here that indicates a strong correlation... 
+
+
+
+
+```{r}
+age_len_model <- lm(age ~ ., data = pdata)
+summary(age_len_model)
+```
+
+And indeed we can see that totlength is one of the least significant predictors for age in our datset; the p-value measures the significance of a particular predictor's effect on our model; so the lower the value, the less impactful. 
+
+In fact totlnght has a high Pvalue @ 0.7~ and is therefore not a substantial contributor; being the highest it is likely to be excluded from feature selection later.... 
+
+
+##### 2a
+
+We remove the pop(population) and case(case number) columns; neither are particularly useful to our regression model and as such are disregarded less they introduce noise
+
+```{r}
+pdata <- pdata[, !(names(pdata) %in% c("case", "Pop"))]
+print(pdata[1, ])
+
+```
+
+
+##### 2b
+There are 7 unique classifications for *site* as such we encode them into identifiers on six columns;
+
+For regressions using one-hot encoding,  some n-1 columns are created (where n is the number of unique values).
+
+This is done in the interest of preserving compute (i.e. the seventh site here would be the default where none of 1-6 apply). Furthermore, for each observation; the values of cols across 1-7 for the onehot would become colinear, summing to one always; we wish to preserve the independance.
+
+
+We one hot encode the classifications (just using inbuilt methods for generating the new columns and adding them to the original)
+
+
+```{r}
+unique(pdata$site)
+pdata$site <- as.factor(pdata$site)
+onehot <- model.matrix(~ site - 1, data=pdata)
+pdata <- cbind(pdata, onehot)
+pdata$site7 <- NULL
+```
+
+Drop the site column
+```{r}
+pdata$site <- NULL
+print(pdata[5,])
+```
+##### 2c
+Encode the sex column as a 1,0 for female/. not female
+```{r}
+pdata$female <- ifelse(pdata$sex == "m", 0, 1)
+pdata$sex <- NULL
+print(pdata[5,])
+```
+
+
+##### 2d
+Finally, split the data into training, validation and test sets; Noting that we won't usually have a completely perfect 80,10,10 % split, but we're always within one or two rows.
+We also pre-emptively remove 'age' to mitigate collisions later on
+
+```{r}
+
+
+
+n <- nrow(pdata)
+train_ind <- sample(1:n, size = round(n * 0.8))
+temp_ind <- setdiff(1:n, train_ind)
+test_ind <- sample(temp_ind, size = round(n * 0.1))
+validation_ind <- setdiff(temp_ind, test_ind)
+
+
+df_train <- pdata[train_ind, ]
+df_test <- pdata[test_ind, ]
+df_val <- pdata[validation_ind, ]
+
+features <- colnames(df_train)
+features <- setdiff(colnames(df_train), "age")
+
+
+cat("Training Set:", nrow(df_train), "rows\n")
+cat("Validation Set:", nrow(df_val), "rows\n")
+cat("Test Set:", nrow(df_test), "rows\n")
+
+```
+
+##### 3
+We now have a our data with sites delineated by unique columns, sex denoted into a single column and indeed a total of 18 columns, including weight. San's the *age* column. Shortly, we will select the best *greedy* linear regression model. We can generate $2^k$ permutations of columns (as there is no requirement to include all or any even as this $2^k$ includes the null model (mean) )
+
+Therefore, the entire space of unique models is 131,072 (2^17 18 cols, 1x response, 17x predictor)
+
+
+##### 4
+
+We will now perform step wise feature selection (forward) to find features which are optimal for our linear regression model.
+
+Broadly; we take the greedy approach; we will begin with the null (mean) model
+
+
+Firstly; our manual r_square function is defined:
+```{r}
+R_Squared <- function(model, data) {
+  response_var <- all.vars(formula(model))[1]
+  predictions <- predict(model, data)
+  residuals <- data[[response_var]] - predictions
+  SST <- sum((data[[response_var]] - mean(data[[response_var]]))^2)
+  SSE <- sum(residuals^2)
+  
+  R_squared <- 1 - (SSE / SST)
+  return(R_squared)
+}
+```
+
+
+The following executes these broad steps:
+
+We intialise a null model (i.e. the gradient / mean). We then iteratively add features to the *running features*, assess the *R^2* metric as a means of analysis of fit, we train each model on the subset of data and subsequently store the best models, features in the named lists as below.
+
+```{r}
+predictor <- c("1")
+best_features <- vector(length = length(features) +1)
+selection <- as.formula("age ~ 1") # Explicitly fit a model with just the intercept
+fit_models <- lm(formula = selection, data = df_train)
+b0 <- coef(fit_models)[1]
+mean_age <- mean(df_train$age)
+best_features[1] <- predictor
+cat("The mean age of the dataset is", mean_age, "and the intercept of the base model is", b0, ", so they match.\n")
+# Initialize the null model with just the intercept
+best_features <- vector("list", length = length(features) + 1)
+M_models <- vector("list", length = length(features) + 1)
+M_features <- vector("list", length = length(features) + 1)
+M_r_square <- vector("list", length = length(features) + 1)
+
+# Start with the null model
+null_model <- lm(age ~ 1, data = df_train)
+b0 <- coef(null_model)[1]
+mean_age <- mean(df_train$age)
+
+best_features[[1]] <- "1"
+M_models[[1]] <- null_model
+M_features[[1]] <- "Mean Y"
+M_r_square[[1]] <- summary(null_model)$r.squared
+for (i in 1:length(features)) {
+  p <- i
+  if (p == 1) {
+    predictor <- combn(features, p, simplify = FALSE)
+  } else {
+    predictor <- Filter(function(x) all(best_features[2:p] %in% x), combn(features, p, simplify = FALSE))
+  }
+
+  current_selections <- sapply(predictor, function(x) paste("age", "~", paste0(x, collapse = "+"), sep = " "))
+  current_models <- lapply(current_selections, function(x) lm(x, data = df_train))
+
+  R2_of_current_models <- sapply(current_models, function(m) R_Squared(m, df_train))
+  index_of_best <- which.max(R2_of_current_models)
+  M_models[[p + 1]] <- current_models[[index_of_best]]
+  M_r_square[[p + 1]] <- R2_of_current_models[[index_of_best]]
+  
+  M_features[[p + 1]] <- current_selections[[index_of_best]]
+  best_features[[p + 1]] <- setdiff(predictor[[index_of_best]], best_features[2:p])
+}
+```
+
+
+As such we now have *number of features -1* models. Noting that the selection process is greedy wrt R^2, there is no guarantee that our selection is optimal, or rather, that any member of our selection is optimal.
+
+The following are our models as selected based on maximizing R^2....
+
+Note that R^2 continually increases... so it stands to reason that our selected forward model at this stage is the final model.
+
+```{r}
+
+r2_df <- data.frame(
+  Index = seq_along(M_r_square),
+  R_Squared = unlist(M_r_square)
+)
+
+# Plot using ggplot2
+ggplot(r2_df, aes(x = Index, y = R_Squared)) +
+  geom_line(color = "blue") +
+  geom_point(color = "red") +
+  labs(title = "R-Squared Values Across Models",
+       x = "Model Index",
+       y = "R-Squared") +
+  theme_minimal()
+
+
+```
+```{r}
+
+non_null_features <- M_features[!sapply(M_features, is.null)]
+model_formulas <- data.frame(Step = seq_along(non_null_features), Formula = unlist(non_null_features),RSquared = unlist(M_r_square))
+knitr::kable(model_formulas, col.names = c("Step", "Model Formula", "Rsquared"), align = "l", caption = "Stepwise Feature Selection Results")
+
+
+```
+The reader may need to cross reference the index in the above table, features against the graph.
+
+##### 5:
+
+
+
+  
+
+Our predictors which are related to body measurements and the site variables are the most important for predicting age. The features hdlngth, footlgth, earconch, eye, and body measurements (chest, belly) are consistently associated with higher R-squared values, indicating their significant contribution to explaining the variance in age; making them good all good choices for predictors. From our graph; chest (in some random passes hndlength) is obviously the largest mover of our R2 metric; however it is noted that that is against the mean; so the next most ocntributing feature: *site4* is the most important predictor (assuming we always use a multilinear model)
+
+
+
+6:
+
+```{r}
+non_null_models <- Filter(Negate(is.null), M_models)
+
+#print(non_null_models)
+
+MSE_val <- sapply(non_null_models, function(model) mean((df_val$age - predict(model, newdata = df_val))^2))
+
+
+
+non_null_features <- M_features[!sapply(M_features, is.null)]
+mrs <- M_r_square[!sapply(M_r_square, is.null)]
+print(R2_of_current_models)
+model_formulas <- data.frame(Step = seq_along(non_null_features), 
+                             RSquared = unlist(mrs),
+                             MSE = unlist(MSE_val))
+knitr::kable(model_formulas, col.names = c("Step",  "R^2 (train)", "MSE (Validation)"), align = "l", caption = "Stepwise Feature Selection Results")
+
+
+mse_df <- data.frame(
+  Index = seq_along(MSE_val),
+  MSE = MSE_val
+)
+
+# Plot using ggplot2
+ggplot(mse_df, aes(x = Index, y = MSE)) +
+  geom_line(color = "blue") +
+  geom_point(color = "red") +
+  labs(title = "MSE Values Across Models",
+       x = "Model Index",
+       y = "Mean Squared Error") +
+  theme_minimal()
+
+
+
+```
+Above: The MSE for the test set determines the most accurate model.... In our case it is the (16th) 17th model in the set.
+
+
+```{r}
+# Print MSE values
+print(MSE_val)
+Best_overall_index <- which.min(MSE_val)
+Best_overall_model <- M_models[[Best_overall_index]]
+Best_overall_model_formula <- M_features[[Best_overall_index]]
+coefficients <- coef(Best_overall_model)
+intercept <- coefficients[1]
+gradient <- coefficients[-1]  # Excluding the intercept
+
+# Print the results with an explanatory sentence
+cat("The best overall model based on MSE has the formula:", Best_overall_model_formula, "\n")
+cat("Index of the best model:", Best_overall_index, "\n")
+cat("Intercept:", intercept, "\n")
+
+cat("Gradient (coefficients for predictors):\n", paste(names(gradient), gradient, sep="=", collapse="\n"), "\n")
+
+
+
+
+```
+
+For our validation set; it turns out that the entire dataset is used (augmented from earlier steps). That is, the lowest MSE on our datset is given by the set of all features as predictors.
+
+
+So; with this in mind; our final measure of performance is of the test set:
+
+```{r}
+
+preds_test <- predict(Best_overall_model, newdata = df_test)
+residuals <- df_test$age - preds_test
+mse_test <- mean(residuals^2)
+cat("The MSE of the best overall model on the test set is:", mse_test, "\n")
+
+
+preds_vs_actual_df <- data.frame(
+  Actual = df_test$age,
+  Predicted = preds_test
+)
+
+# Plot predictions vs actual values
+ggplot(preds_vs_actual_df, aes(x = Actual, y = Predicted)) +
+  geom_point(color = "blue") +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "red") +
+  labs(title = "Predictions vs. Actual Values for the Best Overall Model",
+       x = "Actual Values",
+       y = "Predicted Values") +
+  theme_minimal()
+
+
+
+```
+
+OUR MSE on test is *Huge*.
+
+Essentially, making the selected model useless; there are intuitive choices that would better fit our test set (ie a line rotated say 30d to the clockwise). Again, our test set is very small; the MSE of our train data is not particularly close to this and it stands that using other mixes of test / train would generalize much better (randomization). While other implementations or approaches use MSE across the board, the R2 approach within the train / val set better estimates explainable variance as opposed to objective performance.
+
+
+
+
+
+/fin
+
+
+
+
